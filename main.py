@@ -1125,8 +1125,12 @@ class T5FlashAttention2(T5Attention):
         else:
             # The -q_len: slice assumes left padding.
             attention_mask = attention_mask[:, -query_length:]
-            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
-
+            # Use the internal _get_unpad_data helper to avoid the version mismatch with flash-attn's unpad_input
+            indices_q, cu_seqlens_q, max_seqlen_in_batch_q = _get_unpad_data(attention_mask)
+            batch_size, q_seq_len, num_heads, head_dim = query_layer.shape
+            query_layer = index_first_axis(
+                query_layer.reshape(batch_size * q_seq_len, num_heads, head_dim), indices_q
+            )
         return (
             query_layer,
             key_layer,
