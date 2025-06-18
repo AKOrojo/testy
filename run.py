@@ -1,4 +1,6 @@
 # train_c4.py (Revised)
+import os
+
 import torch
 import random
 from datasets import load_dataset
@@ -124,6 +126,9 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
 # --- Main Training Function ---
 
 def main():
+    # 2. Set the environment variable right at the beginning of your main function
+    os.environ["WANDB_PROJECT"] = "c4-t5-pretraining"
+
     tokenizer_name = "t5-small"
     model_output_dir = "./c4-t5-from-scratch"
 
@@ -142,12 +147,12 @@ def main():
     model = T5ForConditionalGeneration(config).to(dtype=torch.bfloat16)
     print(f"Model created with {model.num_parameters():,} parameters.")
 
-    print("Loading C4 dataset in streaming mode...")
-    streamed_dataset = load_dataset("allenai/c4", "en", streaming=True)
-    train_stream = streamed_dataset['train']
+    print("Loading C4 dataset from LOCAL CACHE...")
+    local_cache_dir = "../c4_dataset_cache"
+    full_dataset = load_dataset("allenai/c4", "en", cache_dir=local_cache_dir)
+    train_stream = full_dataset['train']
 
     print("Applying transformations (chunking, tokenizing, and denoising) on the fly...")
-    # **FIX**: New, more robust data pipeline
     # 1. Filter out empty or whitespace-only docs
     filtered_stream = train_stream.filter(lambda x: x['text'].strip() != "")
     # 2. Chunk and tokenize
@@ -182,7 +187,7 @@ def main():
         warmup_steps=2000,
         weight_decay=0.01,
         dataloader_num_workers=4,
-        report_to="none",
+        report_to=["wandb"]
     )
 
     trainer = Trainer(
