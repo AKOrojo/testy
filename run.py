@@ -148,7 +148,7 @@ def main():
     print(f"Model created with {model.num_parameters():,} parameters.")
 
     print("Loading C4 dataset from LOCAL CACHE...")
-    local_cache_dir = "../c4_dataset_cache"
+    local_cache_dir = "../../Downloads/c4_dataset_cache"
     full_dataset = load_dataset("allenai/c4", "en", cache_dir=local_cache_dir)
     train_stream = full_dataset['train']
 
