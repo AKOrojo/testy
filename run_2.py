@@ -172,7 +172,7 @@ def main():
         output_dir=model_output_dir,
         max_steps=1_000_000,
         optim="adafactor",
-        learning_rate=None,
+        learning_rate=0.001,
         #lr_scheduler_type="constant",
         bf16=True,
         torch_compile=False,
