@@ -183,7 +183,7 @@ def main():
         save_total_limit=3,
         warmup_steps=2000,
         weight_decay=0.01,
-        dataloader_num_workers=4,
+        dataloader_num_workers=1,
         report_to=["wandb"],
         remove_unused_columns=False,
     )
