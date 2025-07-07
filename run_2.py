@@ -173,7 +173,7 @@ def main():
         max_steps=1_000_000,
         optim="adafactor",
         learning_rate=None,
-        lr_scheduler_type="constant",
+        #lr_scheduler_type="constant",
         bf16=True,
         torch_compile=False,
         per_device_train_batch_size=16,  # ByT5 is larger, you may need to reduce batch size
