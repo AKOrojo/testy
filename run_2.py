@@ -146,23 +146,25 @@ def main():
     full_dataset = load_dataset("allenai/c4", "en", streaming=True)
     train_stream = full_dataset['train']
 
-    # 2. Shuffle the streaming dataset (No changes here)
-    shuffled_stream = train_stream.shuffle(seed=42, buffer_size=10_000)
+    # 2. Define a generator "factory" function.
+    # This function wraps the shuffling and chunking logic.
+    def processing_generator():
+        # Shuffling and chunking happens inside the factory,
+        # ensuring a new stream is created each time this function is called.
+        shuffled_stream = train_stream.shuffle(seed=42, buffer_size=10_000)
+        yield from chunk_and_tokenize_stream(shuffled_stream, tokenizer, chunk_size=1024)
 
-    # 3. Apply stateful chunking and tokenization using our generator (No changes here)
+    # 3. Create the IterableDataset from the factory function.
     print("Applying transformations (chunking, tokenizing, and denoising) on the fly...")
-    chunked_tokenized_stream = chunk_and_tokenize_stream(shuffled_stream, tokenizer, chunk_size=1024)
+    chunked_dataset = IterableDataset.from_generator(processing_generator)
 
-    # 4. Apply T5 denoising using .map() (No changes here)
-    processed_stream_generator = IterableDataset.from_generator(
-        lambda: chunked_tokenized_stream
-    )
-    denoised_stream = processed_stream_generator.map(
+    # 4. Apply T5 denoising using .map() to the newly created dataset
+    denoised_stream = chunked_dataset.map(
         lambda examples: preprocess_for_t5_denoising(examples, tokenizer, mean_noise_span_length=20.0),
         batched=True,
         batch_size=256,
     )
-
+    
     # Data collator for dynamic padding within each batch
     data_collator = DataCollatorForSeq2Seq(tokenizer, model=model, pad_to_multiple_of=8)
 
