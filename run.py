@@ -1,14 +1,15 @@
 import os
-import torch
 import random
+
+import torch
 from datasets import load_dataset, IterableDataset
-from itertools import chain
 from transformers import (
     AutoTokenizer,
     TrainingArguments,
     Trainer,
-    default_data_collator,
+    DataCollatorForSeq2Seq,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 from main import T5ForConditionalGeneration, T5Config
 
@@ -37,6 +38,7 @@ def chunk_and_tokenize_stream(dataset: IterableDataset, tokenizer, chunk_size=51
 def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_noise_span_length=3.0):
     extra_id_tokens = [f"<extra_id_{i}>" for i in range(100)]
     extra_id_token_ids = tokenizer.convert_tokens_to_ids(extra_id_tokens)
+    max_length = tokenizer.model_max_length
 
     all_input_ids = []
     all_labels = []
@@ -94,8 +96,10 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
         new_input_ids.extend(input_ids[last_index:])
         target_ids.append(tokenizer.eos_token_id)
 
+        truncated_labels = target_ids[:max_length]
+
         all_input_ids.append(new_input_ids)
-        all_labels.append(target_ids)
+        all_labels.append(truncated_labels)
 
     # Padding is now handled by the Trainer's data collator
     return {"input_ids": all_input_ids, "labels": all_labels}
@@ -104,10 +108,10 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
 # --- Main Training Function ---
 
 def main():
-    os.environ["WANDB_PROJECT"] = "c4-t5-pretraining-stream"
+    os.environ["WANDB_PROJECT"] = "c4-t5-pretraining"
 
     tokenizer_name = "t5-small"
-    model_output_dir = "./c4-t5-from-scratch-stream"
+    model_output_dir = "./c4-t5-from-scratch-new"
 
     print(f"Loading tokenizer '{tokenizer_name}'...")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -134,11 +138,15 @@ def main():
 
     # 3. Apply stateful chunking and tokenization using our generator
     print("Applying transformations (chunking, tokenizing, and denoising) on the fly...")
-    chunked_tokenized_stream = chunk_and_tokenize_stream(shuffled_stream, tokenizer, chunk_size=512)
 
-    # 4. Apply T5 denoising using .map() on our new stream of chunks
+    # 4. Create the IterableDataset by passing the function and its arguments
     processed_stream_generator = IterableDataset.from_generator(
-        lambda: chunked_tokenized_stream
+        chunk_and_tokenize_stream,
+        gen_kwargs={
+            "dataset": shuffled_stream,
+            "tokenizer": tokenizer,
+            "chunk_size": 512,
+        },
     )
 
     denoised_stream = processed_stream_generator.map(
@@ -155,16 +163,16 @@ def main():
         max_steps=1_000_000,
         bf16=True,
         torch_compile=False,
-        per_device_train_batch_size=128,
-        gradient_accumulation_steps=2,
+        per_device_train_batch_size=512,
+        gradient_accumulation_steps=4,
         logging_steps=500,
         save_steps=10000,
         save_total_limit=3,
-        learning_rate=5e-4,
-        lr_scheduler_type="cosine",
-        warmup_steps=2000,
+        learning_rate=0.01,
+        lr_scheduler_type="inverse_sqrt",
+        warmup_steps=10000,
         weight_decay=0.01,
-        dataloader_num_workers=4,
+        dataloader_num_workers=1,
         report_to=["wandb"],
         remove_unused_columns=False,
     )
@@ -176,8 +184,18 @@ def main():
         data_collator=data_collator,
     )
 
-    print("🚀 Starting distributed training on the streaming C4 dataset...")
-    trainer.train()
+    print("Checking for existing checkpoints...")
+    last_checkpoint = get_last_checkpoint(training_args.output_dir)
+
+    resume_from_checkpoint = None
+    if last_checkpoint:
+        print(f"✅ Checkpoint found at {last_checkpoint}. Resuming training.")
+        resume_from_checkpoint = last_checkpoint
+    else:
+        print("⛔️ No checkpoint found. Starting training from scratch.")
+
+    print("🚀 Starting or resuming distributed training on the streaming C4 dataset...")
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     print("✅ Training complete.")
 
     trainer.save_model(model_output_dir)
