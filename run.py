@@ -162,7 +162,7 @@ def main():
         output_dir=model_output_dir,
         max_steps=1_000_000,
         bf16=True,
-        torch_compile=False,
+        torch_compile=True,
         per_device_train_batch_size=512,
         gradient_accumulation_steps=4,
         logging_steps=500,
