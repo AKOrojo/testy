@@ -6,3 +6,4 @@ slurm-*
 /c4-byt5-from-scratch-stream/
 /wandb/
 /__pycache__/
+*.sh

@@ -1,9 +1,9 @@
-import os
-import torch
-import random
 import argparse
+import os
+import random
+
+import torch
 from datasets import load_dataset, IterableDataset
-from itertools import chain
 from transformers import (
     AutoTokenizer,
     TrainingArguments,
@@ -222,6 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for the optimizer.")
     parser.add_argument("--dataloader_num_workers", type=int, default=4, help="Number of workers for the dataloader.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+    parser.add_argument("--optim", type=str, default="adafactor", help="Optimizer to use.")
 
     # Logging and Saving arguments
     parser.add_argument("--logging_steps", type=int, default=500, help="Log training metrics every N steps.")
