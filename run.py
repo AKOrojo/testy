@@ -7,8 +7,9 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments,
     Trainer,
-    default_data_collator,
+    DataCollatorForSeq2Seq,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 from main import T5ForConditionalGeneration, T5Config
 
@@ -37,6 +38,7 @@ def chunk_and_tokenize_stream(dataset: IterableDataset, tokenizer, chunk_size=51
 def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_noise_span_length=3.0):
     extra_id_tokens = [f"<extra_id_{i}>" for i in range(100)]
     extra_id_token_ids = tokenizer.convert_tokens_to_ids(extra_id_tokens)
+    max_length = tokenizer.model_max_length
 
     all_input_ids = []
     all_labels = []
@@ -94,8 +96,10 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
         new_input_ids.extend(input_ids[last_index:])
         target_ids.append(tokenizer.eos_token_id)
 
+        truncated_labels = target_ids[:max_length]
+
         all_input_ids.append(new_input_ids)
-        all_labels.append(target_ids)
+        all_labels.append(truncated_labels)
 
     # Padding is now handled by the Trainer's data collator
     return {"input_ids": all_input_ids, "labels": all_labels}
@@ -138,6 +142,7 @@ def main():
     processed_stream_generator = IterableDataset.from_generator(
         lambda: chunked_tokenized_stream
     )
+
     denoised_stream = processed_stream_generator.map(
         lambda examples: preprocess_for_t5_denoising(
             examples,
