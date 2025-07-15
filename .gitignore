@@ -7,3 +7,4 @@ slurm-*
 /wandb/
 /__pycache__/
 *.sh
+/c4-t5-from-scratch-new/
