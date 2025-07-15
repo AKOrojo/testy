@@ -108,6 +108,8 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
 
 # --- Main Training Function ---
 
+# --- Main Training Function ---
+
 def main(args):
     if "wandb" in args.report_to:
         os.environ["WANDB_PROJECT"] = args.wandb_project
@@ -135,16 +137,37 @@ def main(args):
     # 2. Shuffle the streaming dataset
     shuffled_stream = train_stream.shuffle(seed=args.seed, buffer_size=args.shuffle_buffer_size)
 
-    # 3. Apply stateful chunking and tokenization
-    print("Applying transformations (chunking, tokenizing, and denoising) on the fly...")
-    chunked_tokenized_stream = chunk_and_tokenize_stream(shuffled_stream, tokenizer, chunk_size=args.chunk_size)
+    # 3. Define a new tokenization and chunking map function
+    def tokenize_and_chunk(examples):
+        # First, tokenize all the text examples in the batch
+        tokenized_outputs = tokenizer(examples["text"], truncation=False, add_special_tokens=False)
 
-    # 4. Apply T5 denoising using .map()
-    processed_stream_generator = IterableDataset.from_generator(
-        lambda: chunked_tokenized_stream
+        # Concatenate all the token lists into one super-list
+        concatenated_ids = sum(tokenized_outputs["input_ids"], [])
+
+        # Calculate the total number of chunks we can make
+        total_length = len(concatenated_ids)
+        num_chunks = total_length // args.chunk_size
+
+        # Create the chunks
+        chunked_ids = [
+            concatenated_ids[i * args.chunk_size : (i + 1) * args.chunk_size]
+            for i in range(num_chunks)
+        ]
+        return {"input_ids": chunked_ids}
+
+
+    # 4. Apply transformations
+    # First, tokenize and chunk the text stream. We use a larger batch_size for map to make chunking more efficient.
+    chunked_stream = shuffled_stream.map(
+        tokenize_and_chunk,
+        batched=True,
+        batch_size=2000, # This can be adjusted based on memory
+        remove_columns=["text", "timestamp", "url"]
     )
 
-    denoised_stream = processed_stream_generator.map(
+    # Then, apply the denoising map to the chunked stream
+    denoised_stream = chunked_stream.map(
         lambda examples: preprocess_for_t5_denoising(
             examples,
             tokenizer,
@@ -194,7 +217,6 @@ def main(args):
     trainer.save_model(args.model_output_dir)
     tokenizer.save_pretrained(args.model_output_dir)
     print(f"Model saved to {args.model_output_dir}")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="T5 Pre-training on C4 with Streaming")
