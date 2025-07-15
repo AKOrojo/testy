@@ -108,7 +108,7 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
 
 # --- Main Training Function ---
 
-def main():
+def main(args):
     if "wandb" in args.report_to:
         os.environ["WANDB_PROJECT"] = args.wandb_project
 
