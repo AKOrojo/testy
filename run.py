@@ -123,6 +123,7 @@ def main(args):
         pad_token_id=tokenizer.pad_token_id,
         eos_token_id=tokenizer.eos_token_id,
         decoder_start_token_id=tokenizer.pad_token_id,
+        dropout_rate=0.1,
         _attn_implementation="flash_attention_2" if args.use_flash_attention_2 else "eager"
     )
     # Load the model with the correct dtype for Flash Attention and bf16 training
@@ -201,6 +202,7 @@ def main(args):
         report_to=args.report_to,
         remove_unused_columns=False,
         seed=args.seed,
+        split_batches=True
     )
 
     trainer = Trainer(
