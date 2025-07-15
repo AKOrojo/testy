@@ -104,13 +104,11 @@ def preprocess_for_t5_denoising(examples, tokenizer, corruption_rate=0.15, mean_
 # --- Main Training Function ---
 
 def main():
-    os.environ["WANDB_PROJECT"] = "c4-t5-pretraining-stream"
+    if "wandb" in args.report_to:
+        os.environ["WANDB_PROJECT"] = args.wandb_project
 
-    tokenizer_name = "t5-small"
-    model_output_dir = "./c4-t5-from-scratch-stream"
-
-    print(f"Loading tokenizer '{tokenizer_name}'...")
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    print(f"Loading tokenizer '{args.tokenizer_name}'...")
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
 
     print("Initializing a new T5 model from scratch...")
     config = T5Config(
@@ -118,7 +116,7 @@ def main():
         pad_token_id=tokenizer.pad_token_id,
         eos_token_id=tokenizer.eos_token_id,
         decoder_start_token_id=tokenizer.pad_token_id,
-        _attn_implementation="flash_attention_2",
+        _attn_implementation="flash_attention_2" if args.use_flash_attention_2 else "eager"
     )
     # Load the model with the correct dtype for Flash Attention and bf16 training
     model = T5ForConditionalGeneration(config).to(dtype=torch.bfloat16)
@@ -130,43 +128,50 @@ def main():
     train_stream = full_dataset['train']
 
     # 2. Shuffle the streaming dataset
-    shuffled_stream = train_stream.shuffle(seed=42, buffer_size=10_000)
+    shuffled_stream = train_stream.shuffle(seed=args.seed, buffer_size=args.shuffle_buffer_size)
 
-    # 3. Apply stateful chunking and tokenization using our generator
+    # 3. Apply stateful chunking and tokenization
     print("Applying transformations (chunking, tokenizing, and denoising) on the fly...")
-    chunked_tokenized_stream = chunk_and_tokenize_stream(shuffled_stream, tokenizer, chunk_size=512)
+    chunked_tokenized_stream = chunk_and_tokenize_stream(shuffled_stream, tokenizer, chunk_size=args.chunk_size)
 
-    # 4. Apply T5 denoising using .map() on our new stream of chunks
+    # 4. Apply T5 denoising using .map()
     processed_stream_generator = IterableDataset.from_generator(
         lambda: chunked_tokenized_stream
     )
-
     denoised_stream = processed_stream_generator.map(
-        lambda examples: preprocess_for_t5_denoising(examples, tokenizer),
+        lambda examples: preprocess_for_t5_denoising(
+            examples,
+            tokenizer,
+            corruption_rate=args.corruption_rate,
+            mean_noise_span_length=args.mean_noise_span_length
+        ),
         batched=True,
-        batch_size=256,
+        batch_size=args.map_batch_size,
     )
 
     # Data collator for dynamic padding within each batch
     data_collator = DataCollatorForSeq2Seq(tokenizer, model=model, pad_to_multiple_of=8)
 
     training_args = TrainingArguments(
-        output_dir=model_output_dir,
-        max_steps=1_000_000,
+        output_dir=args.model_output_dir,
+        run_name=args.run_name,
+        max_steps=args.max_steps,
         bf16=True,
-        torch_compile=False,
-        per_device_train_batch_size=128,
-        gradient_accumulation_steps=2,
-        logging_steps=500,
-        save_steps=10000,
-        save_total_limit=3,
-        learning_rate=5e-4,
-        lr_scheduler_type="cosine",
-        warmup_steps=2000,
-        weight_decay=0.01,
-        dataloader_num_workers=4,
-        report_to=["wandb"],
+        torch_compile=args.torch_compile,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        logging_steps=args.logging_steps,
+        save_steps=args.save_steps,
+        save_total_limit=args.save_total_limit,
+        optim=args.optim,
+        learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
+        warmup_steps=args.warmup_steps,
+        weight_decay=args.weight_decay,
+        dataloader_num_workers=args.dataloader_num_workers,
+        report_to=args.report_to,
         remove_unused_columns=False,
+        seed=args.seed,
     )
 
     trainer = Trainer(
@@ -180,10 +185,45 @@ def main():
     trainer.train()
     print("✅ Training complete.")
 
-    trainer.save_model(model_output_dir)
-    tokenizer.save_pretrained(model_output_dir)
-    print(f"Model saved to {model_output_dir}")
+    trainer.save_model(args.model_output_dir)
+    tokenizer.save_pretrained(args.model_output_dir)
+    print(f"Model saved to {args.model_output_dir}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="T5 Pre-training on C4 with Streaming")
+
+    # Model and Tokenizer arguments
+    parser.add_argument("--tokenizer_name", type=str, default="t5-small", help="Tokenizer to use.")
+    parser.add_argument("--model_output_dir", type=str, default="./c4-t5-from-scratch-stream", help="Directory to save the final model.")
+    parser.add_argument("--use_flash_attention_2", action="store_true", help="Enable Flash Attention 2 for faster training.")
+
+    # Data processing arguments
+    parser.add_argument("--chunk_size", type=int, default=512, help="Size of token chunks for processing.")
+    parser.add_argument("--corruption_rate", type=float, default=0.15, help="Rate of token corruption for denoising.")
+    parser.add_argument("--mean_noise_span_length", type=float, default=3.0, help="Mean length of noise spans.")
+    parser.add_argument("--shuffle_buffer_size", type=int, default=10000, help="Buffer size for shuffling the streaming dataset.")
+    parser.add_argument("--map_batch_size", type=int, default=256, help="Batch size for the .map() preprocessing step.")
+
+    # Training arguments
+    parser.add_argument("--max_steps", type=int, default=1_000_000, help="Total number of training steps.")
+    parser.add_argument("--torch_compile", action="store_true", help="Enable torch.compile for optimization.")
+    parser.add_argument("--per_device_train_batch_size", type=int, default=128, help="Batch size per GPU.")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=2, help="Steps for gradient accumulation.")
+    parser.add_argument("--learning_rate", type=float, default=5e-4, help="Initial learning rate.")
+    parser.add_argument("--lr_scheduler_type", type=str, default="cosine", help="Learning rate scheduler type.")
+    parser.add_argument("--warmup_steps", type=int, default=2000, help="Number of warmup steps for the LR scheduler.")
+    parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for the optimizer.")
+    parser.add_argument("--dataloader_num_workers", type=int, default=4, help="Number of workers for the dataloader.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+
+    # Logging and Saving arguments
+    parser.add_argument("--logging_steps", type=int, default=500, help="Log training metrics every N steps.")
+    parser.add_argument("--save_steps", type=int, default=10000, help="Save a checkpoint every N steps.")
+    parser.add_argument("--save_total_limit", type=int, default=3, help="Maximum number of checkpoints to keep.")
+    parser.add_argument("--report_to", type=str, default="wandb", help="Reporting backend (e.g., 'wandb', 'none').")
+    parser.add_argument("--wandb_project", type=str, default="c4-t5-pretraining-stream", help="WandB project name.")
+    parser.add_argument("--run_name", type=str, default=None, help="A unique name for the training run, for WandB.") # <-- New argument
+
+    args = parser.parse_args()
+    main(args)
