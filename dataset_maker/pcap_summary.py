@@ -30,7 +30,7 @@ PROMPT_TEMPLATE = """
 You are an expert network analyst. Your task is to generate a detailed, structured analysis of a benign network communication flow. This data will be used to train a new AI model, so the output must be highly detailed, accurate, and easy to parse.
 
 ### TASK
-Analyze the provided network flow data from tshark. First, provide a step-by-step reasoning process. Then, produce a structured report in Markdown format. Finally, write a concise summary paragraph that synthesizes all the information.
+Analyze the provided network flow data from tshark json. First, provide a step-by-step reasoning process. Then, produce a structured report in Markdown format. Finally, write a concise summary paragraph that synthesizes all the information.
 
 ---
 ### 1. REASONING (Chain of Thought)
@@ -69,7 +69,7 @@ Provide the analysis in the following Markdown format. Fill in every field based
 
 ---
 ### 3. FINAL SUMMARY
-Synthesize all the information from the structured report, including the payload summary, into a single, coherent paragraph. This paragraph should be a self-contained summary of the entire flow.
+Synthesize all the information from the structured report, including the payload summary, into a single, coherent paragraph. This paragraph(s) should be a self-contained summary of the entire flow.
 
 ---
 {flow_json}
